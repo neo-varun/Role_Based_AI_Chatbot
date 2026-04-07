@@ -56,6 +56,8 @@ function App() {
   const [chats, setChats] = useState(loadChats);
   const [activeChatId, setActiveChatId] = useState(() => chats[0]?.id ?? null);
   const [input, setInput] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSendingAudio, setIsSendingAudio] = useState(false);
   const [isDevPromptOpen, setIsDevPromptOpen] = useState(false);
   const [rolePrompts, setRolePrompts] = useState(loadRolePrompts);
   const [editingRoleId, setEditingRoleId] = useState(null);
@@ -67,6 +69,9 @@ function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   const activeChat = useMemo(
     () => chats.find((chat) => chat.id === activeChatId) ?? null,
@@ -106,10 +111,85 @@ function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [activeChat?.messages.length, activeChatId]);
 
+  useEffect(
+    () => () => {
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
+
   const updateChatById = (chatId, updater) => {
     setChats((currentChats) =>
       currentChats.map((chat) => (chat.id === chatId ? updater(chat) : chat)),
     );
+  };
+
+  const audioBufferToWavBlob = (audioBuffer) => {
+    const channelCount = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const sampleCount = audioBuffer.length;
+    const bytesPerSample = 2;
+    const blockAlign = channelCount * bytesPerSample;
+    const dataSize = sampleCount * blockAlign;
+    const wavBuffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(wavBuffer);
+
+    const writeString = (offset, value) => {
+      for (let index = 0; index < value.length; index += 1) {
+        view.setUint8(offset + index, value.charCodeAt(index));
+      }
+    };
+
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, channelCount, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, dataSize, true);
+
+    const channels = Array.from({ length: channelCount }, (_, idx) =>
+      audioBuffer.getChannelData(idx),
+    );
+
+    let offset = 44;
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+      for (
+        let channelIndex = 0;
+        channelIndex < channelCount;
+        channelIndex += 1
+      ) {
+        const sample = Math.max(
+          -1,
+          Math.min(1, channels[channelIndex][sampleIndex]),
+        );
+        const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        view.setInt16(offset, int16, true);
+        offset += bytesPerSample;
+      }
+    }
+
+    return new Blob([wavBuffer], { type: "audio/wav" });
+  };
+
+  const convertBlobToWav = async (sourceBlob) => {
+    const audioContext = new (
+      window.AudioContext || window.webkitAudioContext
+    )();
+
+    try {
+      const arrayBuffer = await sourceBlob.arrayBuffer();
+      const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+      return audioBufferToWavBlob(decoded);
+    } finally {
+      await audioContext.close();
+    }
   };
 
   const sendMessage = async () => {
@@ -163,6 +243,125 @@ function App() {
         messages: [...chat.messages, botMessage],
         modeName: selectedRoleName,
       }));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const sendAudioMessage = async (audioBlob) => {
+    const userMessage = { role: "user", text: "[Voice message]" };
+    const currentChat = activeChat ?? createNewChat("New Chat");
+    const shouldCreateNewChat = !activeChat;
+    const currentChatId = currentChat.id;
+    const conversationMessages = [...currentChat.messages, userMessage];
+
+    setSelectedFile(null);
+    setIsSendingAudio(true);
+
+    if (shouldCreateNewChat) {
+      setChats((currentChats) => [currentChat, ...currentChats]);
+      setActiveChatId(currentChatId);
+    }
+
+    updateChatById(currentChatId, (chat) => {
+      const updatedMessages = [...chat.messages, userMessage];
+      return {
+        ...chat,
+        title: chat.messages.length === 0 ? "Voice Message" : chat.title,
+        messages: updatedMessages,
+      };
+    });
+
+    try {
+      const fileType = audioBlob.type || "audio/wav";
+      const extension = "wav";
+      const audioFile = new File(
+        [audioBlob],
+        `recording-${Date.now()}.${extension}`,
+        {
+          type: fileType,
+        },
+      );
+
+      const formData = new FormData();
+      formData.append("file", audioFile);
+      formData.append("messages", JSON.stringify(conversationMessages));
+      formData.append("role_prompts", JSON.stringify(rolePrompts));
+
+      const res = await fetch("http://localhost:8000/chat/audio", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      const selectedRoleName = data.selected_role_name || "General";
+      setActiveModeName(selectedRoleName);
+
+      const botMessage = { role: "bot", text: data.reply };
+
+      updateChatById(currentChatId, (chat) => ({
+        ...chat,
+        messages: [...chat.messages, botMessage],
+        modeName: selectedRoleName,
+      }));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSendingAudio(false);
+    }
+  };
+
+  const handleMicClick = async () => {
+    if (isSendingAudio) {
+      return;
+    }
+
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      console.error("Audio recording is not supported in this browser");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        setIsRecording(false);
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        audioChunksRef.current = [];
+
+        if (audioBlob.size > 0) {
+          try {
+            const wavBlob = await convertBlobToWav(audioBlob);
+            await sendAudioMessage(wavBlob);
+          } catch (err) {
+            console.error(err);
+          }
+        }
+      };
+
+      recorder.start();
+      setIsRecording(true);
     } catch (err) {
       console.error(err);
     }
@@ -428,13 +627,34 @@ function App() {
             </div>
           )}
 
-          <input
-            type="text"
-            placeholder=""
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleInputKeyDown}
-          />
+          <div className="chat-input-wrap">
+            <input
+              type="text"
+              placeholder=""
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleInputKeyDown}
+            />
+            <button
+              className={`mic-btn ${isRecording ? "recording" : ""}`}
+              type="button"
+              aria-label={isRecording ? "Stop recording" : "Start recording"}
+              onClick={handleMicClick}
+              disabled={isSendingAudio}
+            >
+              <svg
+                className="mic-icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <rect x="8" y="3" width="8" height="12" rx="4" ry="4" />
+                <path d="M5 11.5a7 7 0 0 0 14 0" />
+                <path d="M12 18.5v3" />
+                <path d="M9 21.5h6" />
+              </svg>
+            </button>
+          </div>
 
           <button className="send-btn" onClick={sendMessage}>
             ➤
