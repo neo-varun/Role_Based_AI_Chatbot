@@ -250,6 +250,11 @@ function App() {
 
   const sendAudioMessage = async (audioBlob) => {
     const userMessage = { role: "user", text: "[Voice message]" };
+    const pendingVoiceMessage = {
+      role: "user",
+      text: "",
+      isPendingTranscript: true,
+    };
     const currentChat = activeChat ?? createNewChat("New Chat");
     const shouldCreateNewChat = !activeChat;
     const currentChatId = currentChat.id;
@@ -264,7 +269,7 @@ function App() {
     }
 
     updateChatById(currentChatId, (chat) => {
-      const updatedMessages = [...chat.messages, userMessage];
+      const updatedMessages = [...chat.messages, pendingVoiceMessage];
       return {
         ...chat,
         title: chat.messages.length === 0 ? "Voice Message" : chat.title,
@@ -294,18 +299,50 @@ function App() {
       });
 
       const data = await res.json();
+      console.log("Transcript:", data.transcript);
       const selectedRoleName = data.selected_role_name || "General";
       setActiveModeName(selectedRoleName);
 
+      const transcriptText = data.transcript?.trim();
+      const displayUserText =
+        transcriptText || "Voice message (transcription unavailable)";
       const botMessage = { role: "bot", text: data.reply };
 
       updateChatById(currentChatId, (chat) => ({
         ...chat,
-        messages: [...chat.messages, botMessage],
+        messages: chat.messages
+          .map((message, index) =>
+            index === chat.messages.length - 1 &&
+            message.role === "user" &&
+            message.isPendingTranscript
+              ? {
+                  role: "user",
+                  text: displayUserText,
+                }
+              : message,
+          )
+          .concat(botMessage),
+        title:
+          chat.messages.length === 1 && chat.title === "Voice Message"
+            ? displayUserText.slice(0, 28)
+            : chat.title,
         modeName: selectedRoleName,
       }));
     } catch (err) {
       console.error(err);
+      updateChatById(currentChatId, (chat) => ({
+        ...chat,
+        messages: chat.messages.map((message, index) =>
+          index === chat.messages.length - 1 &&
+          message.role === "user" &&
+          message.isPendingTranscript
+            ? {
+                role: "user",
+                text: "Voice message (send failed)",
+              }
+            : message,
+        ),
+      }));
     } finally {
       setIsSendingAudio(false);
     }
@@ -595,9 +632,20 @@ function App() {
           {(activeChat?.messages ?? []).map((msg, index) => (
             <div key={index} className={`message ${msg.role}`}>
               <div className="message-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {msg.text}
-                </ReactMarkdown>
+                {msg.isPendingTranscript ? (
+                  <div className="transcribing-message" aria-live="polite">
+                    <span>Transcribing your message</span>
+                    <span className="transcribing-dots" aria-hidden="true">
+                      <span>.</span>
+                      <span>.</span>
+                      <span>.</span>
+                    </span>
+                  </div>
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {msg.text}
+                  </ReactMarkdown>
+                )}
               </div>
             </div>
           ))}

@@ -220,6 +220,7 @@ async def chat_audio(
         parsed_messages = parse_messages_json(messages)
         parsed_role_prompts = parse_role_prompts_json(role_prompts)
         audio_transcript = transcribe_audio_for_routing(audio_part)
+        print("Transcript:", audio_transcript)
 
         routing_message = (
             audio_transcript
@@ -261,6 +262,7 @@ async def chat_audio(
             "reply": response.text,
             "selected_role_id": selected_role.id if selected_role else None,
             "selected_role_name": selected_role.name if selected_role else "General",
+            "transcript": audio_transcript,
         }
     except Exception as e:
         return {"reply": f"Error: {str(e)}"}
