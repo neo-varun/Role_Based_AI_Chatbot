@@ -237,8 +237,51 @@
   overflow-x: auto;
 }
 
+.message-content {
+  max-width: 100%;
+}
+
 .message.user .message-content pre {
   background: rgba(255, 255, 255, 0.15);
+}
+
+.mermaid-wrapper {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  background: rgba(12, 18, 28, 0.04);
+  border: 1px solid rgba(12, 18, 28, 0.12);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.mermaid-diagram {
+  min-width: 0;
+}
+
+.mermaid-diagram svg {
+  display: block;
+  width: auto;
+  max-width: none;
+  height: auto;
+}
+
+.ascii-diagram {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(12, 18, 28, 0.12);
+  background: rgba(12, 18, 28, 0.06);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .transcribing-message {

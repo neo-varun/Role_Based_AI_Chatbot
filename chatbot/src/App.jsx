@@ -1,10 +1,195 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import mermaid from "mermaid";
 import "./App.css";
 
 const STORAGE_KEY = "role-based-ai-chatbot.conversations";
 const ROLE_PROMPTS_STORAGE_KEY = "role-based-ai-chatbot.role-prompts";
+let isMermaidInitialized = false;
+
+const initializeMermaid = () => {
+  if (isMermaidInitialized) {
+    return;
+  }
+
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "default",
+  });
+
+  isMermaidInitialized = true;
+};
+
+const extractMermaidBlock = (text = "") => {
+  const match = text.match(/```mermaid\s*([\s\S]*?)```/i);
+
+  if (!match || match.index === undefined) {
+    return null;
+  }
+
+  const before = text.slice(0, match.index);
+  const fullMatch = match[0];
+  const after = text.slice(match.index + fullMatch.length);
+
+  return {
+    chart: match[1]?.trim() ?? "",
+    before,
+    after,
+  };
+};
+
+const looksLikeAsciiDiagramLine = (line = "") => {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  const hasNode = /\[[^\]\n]{2,}\]/.test(trimmed);
+  const isConnectorOnly = /^[\-|\\/\s]+$/.test(trimmed);
+  const hasArrowConnector = /-->|<--|----/.test(trimmed);
+  const hasDiagramGlyphs = /[│├└┌┐┘┬┴┼─▼◄►]/.test(trimmed);
+
+  return hasNode || isConnectorOnly || hasArrowConnector || hasDiagramGlyphs;
+};
+
+const extractAsciiDiagramSection = (text = "") => {
+  const lines = text.split("\n");
+  const headingIndex = lines.findIndex((line) =>
+    /architecture\s*\(text\s*diagram\)\s*:/i.test(line),
+  );
+
+  if (headingIndex === -1) {
+    return null;
+  }
+
+  let diagramStart = -1;
+
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      continue;
+    }
+
+    if (looksLikeAsciiDiagramLine(line)) {
+      diagramStart = index;
+    }
+
+    break;
+  }
+
+  if (diagramStart === -1) {
+    return null;
+  }
+
+  let diagramEnd = diagramStart;
+
+  for (let index = diagramStart; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      break;
+    }
+
+    diagramEnd = index;
+  }
+
+  const diagramLines = lines.slice(diagramStart, diagramEnd + 1);
+  const hasDiagramContent = diagramLines.some((line) =>
+    looksLikeAsciiDiagramLine(line),
+  );
+
+  if (!hasDiagramContent) {
+    return null;
+  }
+
+  const before = lines.slice(0, diagramStart).join("\n");
+  const diagram = diagramLines.join("\n");
+  const after = lines.slice(diagramEnd + 1).join("\n");
+
+  return { before, diagram, after };
+};
+
+const formatStepLines = (text = "") => {
+  if (!text || !/Step\s*\d+\s*:/i.test(text)) {
+    return text;
+  }
+
+  const parts = text.split(/(```[\s\S]*?```)/g);
+
+  return parts
+    .map((part) => {
+      if (part.startsWith("```")) {
+        return part;
+      }
+
+      return part
+        .replace(/\s+(Step\s*\d+\s*:)/gi, "\n\n$1")
+        .replace(/(Step\s*\d+\s*:[^\n]*?)(?=\s+Step\s*\d+\s*:)/gi, "$1\n\n")
+        .replace(/^(System Flow\s*:)/i, "$1\n\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    })
+    .join("");
+};
+
+function MermaidDiagram({ chart }) {
+  const containerRef = useRef(null);
+  const [hasRenderError, setHasRenderError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const renderChart = async () => {
+      if (!containerRef.current || !chart?.trim()) {
+        return;
+      }
+
+      initializeMermaid();
+
+      const chartId = crypto.randomUUID
+        ? `mermaid-${crypto.randomUUID()}`
+        : `mermaid-${Date.now()}`;
+
+      try {
+        const { svg, bindFunctions } = await mermaid.render(chartId, chart);
+
+        if (!isMounted || !containerRef.current) {
+          return;
+        }
+
+        containerRef.current.innerHTML = svg;
+        bindFunctions?.(containerRef.current);
+        setHasRenderError(false);
+      } catch (error) {
+        if (!isMounted || !containerRef.current) {
+          return;
+        }
+
+        setHasRenderError(true);
+      }
+    };
+
+    renderChart();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [chart]);
+
+  if (hasRenderError) {
+    return <pre className="ascii-diagram">{chart}</pre>;
+  }
+
+  return (
+    <div className="mermaid-wrapper">
+      <div ref={containerRef} className="mermaid-diagram" />
+    </div>
+  );
+}
 
 const createNewChat = (title = "New Chat") => ({
   id: crypto.randomUUID
@@ -629,32 +814,70 @@ function App() {
         </div>
 
         <div className="chat-box">
-          {(activeChat?.messages ?? []).map((msg, index) => (
-            <div key={index} className={`message ${msg.role}`}>
-              <div className="message-content">
-                {msg.isPendingTranscript ? (
-                  <div className="transcribing-message" aria-live="polite">
-                    <span>Transcribing your message</span>
-                    <span className="transcribing-dots" aria-hidden="true">
-                      <span>.</span>
-                      <span>.</span>
-                      <span>.</span>
-                    </span>
-                  </div>
-                ) : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.text}
-                  </ReactMarkdown>
-                )}
+          {(activeChat?.messages ?? []).map((msg, index) => {
+            const mermaidSection =
+              msg.role === "bot" ? extractMermaidBlock(msg.text) : null;
+            const asciiDiagramSection =
+              msg.role === "bot" && !mermaidSection
+                ? extractAsciiDiagramSection(msg.text)
+                : null;
+
+            return (
+              <div key={index} className={`message ${msg.role}`}>
+                <div className="message-content">
+                  {msg.isPendingTranscript ? (
+                    <div className="transcribing-message" aria-live="polite">
+                      <span>Transcribing your message</span>
+                      <span className="transcribing-dots" aria-hidden="true">
+                        <span>.</span>
+                        <span>.</span>
+                        <span>.</span>
+                      </span>
+                    </div>
+                  ) : mermaidSection ? (
+                    <>
+                      {mermaidSection.before.trim() && (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {formatStepLines(mermaidSection.before)}
+                        </ReactMarkdown>
+                      )}
+                      <MermaidDiagram chart={mermaidSection.chart} />
+                      {mermaidSection.after.trim() && (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {formatStepLines(mermaidSection.after)}
+                        </ReactMarkdown>
+                      )}
+                    </>
+                  ) : asciiDiagramSection ? (
+                    <>
+                      {asciiDiagramSection.before.trim() && (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {formatStepLines(asciiDiagramSection.before)}
+                        </ReactMarkdown>
+                      )}
+                      <pre className="ascii-diagram">
+                        {asciiDiagramSection.diagram}
+                      </pre>
+                      {asciiDiagramSection.after.trim() && (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {formatStepLines(asciiDiagramSection.after)}
+                        </ReactMarkdown>
+                      )}
+                    </>
+                  ) : (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {formatStepLines(msg.text)}
+                    </ReactMarkdown>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div ref={chatEndRef} />
         </div>
 
         <div className="input-area">
           <input
-            ref={fileInputRef}
             className="file-input"
             type="file"
             accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
