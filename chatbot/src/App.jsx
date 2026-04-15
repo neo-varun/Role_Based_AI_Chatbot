@@ -6,6 +6,92 @@ import "./App.css";
 
 const STORAGE_KEY = "role-based-ai-chatbot.conversations";
 const ROLE_PROMPTS_STORAGE_KEY = "role-based-ai-chatbot.role-prompts";
+const RESPONSE_LANGUAGE_STORAGE_KEY = "role-based-ai-chatbot.response-language";
+const DEFAULT_RESPONSE_LANGUAGE = "English";
+const RESPONSE_LANGUAGES = [
+  "Afrikaans",
+  "Albanian",
+  "Amharic",
+  "Arabic",
+  "Armenian",
+  "Azerbaijani",
+  "Basque",
+  "Bengali",
+  "Bosnian",
+  "Burmese",
+  "Catalan",
+  "Chinese (Simplified)",
+  "Chinese (Traditional)",
+  "Croatian",
+  "Czech",
+  "Danish",
+  "Dutch",
+  "English",
+  "Estonian",
+  "Filipino",
+  "Finnish",
+  "French",
+  "Galician",
+  "Georgian",
+  "German",
+  "Greek",
+  "Gujarati",
+  "Hausa",
+  "Hebrew",
+  "Hindi",
+  "Hungarian",
+  "Icelandic",
+  "Igbo",
+  "Indonesian",
+  "Irish",
+  "Italian",
+  "Japanese",
+  "Kannada",
+  "Kazakh",
+  "Khmer",
+  "Korean",
+  "Kyrgyz",
+  "Lao",
+  "Latvian",
+  "Lithuanian",
+  "Luxembourgish",
+  "Malay",
+  "Malayalam",
+  "Maltese",
+  "Marathi",
+  "Mongolian",
+  "Nepali",
+  "Norwegian",
+  "Odia",
+  "Persian",
+  "Polish",
+  "Portuguese",
+  "Punjabi",
+  "Romanian",
+  "Russian",
+  "Scottish Gaelic",
+  "Serbian",
+  "Sinhala",
+  "Slovak",
+  "Slovenian",
+  "Somali",
+  "Spanish",
+  "Swahili",
+  "Swedish",
+  "Tajik",
+  "Tamil",
+  "Telugu",
+  "Thai",
+  "Turkish",
+  "Ukrainian",
+  "Urdu",
+  "Uzbek",
+  "Vietnamese",
+  "Welsh",
+  "Xhosa",
+  "Yoruba",
+  "Zulu",
+];
 let isMermaidInitialized = false;
 
 const initializeMermaid = () => {
@@ -237,6 +323,20 @@ const loadRolePrompts = () => {
   }
 };
 
+const loadResponseLanguage = () => {
+  const savedResponseLanguage = localStorage.getItem(
+    RESPONSE_LANGUAGE_STORAGE_KEY,
+  );
+
+  if (!savedResponseLanguage) {
+    return DEFAULT_RESPONSE_LANGUAGE;
+  }
+
+  return RESPONSE_LANGUAGES.includes(savedResponseLanguage)
+    ? savedResponseLanguage
+    : DEFAULT_RESPONSE_LANGUAGE;
+};
+
 function App() {
   const [chats, setChats] = useState(loadChats);
   const [activeChatId, setActiveChatId] = useState(() => chats[0]?.id ?? null);
@@ -251,6 +351,9 @@ function App() {
   const [expandedRoleIds, setExpandedRoleIds] = useState([]);
   const [activeModeName, setActiveModeName] = useState("General");
   const [openChatMenuId, setOpenChatMenuId] = useState(null);
+  const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
+  const [responseLanguage, setResponseLanguage] =
+    useState(loadResponseLanguage);
   const [selectedFile, setSelectedFile] = useState(null);
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -272,6 +375,10 @@ function App() {
   }, [rolePrompts]);
 
   useEffect(() => {
+    localStorage.setItem(RESPONSE_LANGUAGE_STORAGE_KEY, responseLanguage);
+  }, [responseLanguage]);
+
+  useEffect(() => {
     if (activeChatId && !chats.some((chat) => chat.id === activeChatId)) {
       setActiveChatId(chats[0]?.id ?? null);
     }
@@ -284,6 +391,7 @@ function App() {
   useEffect(() => {
     const handleDocumentClick = () => {
       setOpenChatMenuId(null);
+      setIsLanguageMenuOpen(false);
     };
 
     document.addEventListener("click", handleDocumentClick);
@@ -378,14 +486,33 @@ function App() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim()) return;
+    const trimmedInput = input.trim();
+    const fileToSend = selectedFile;
 
-    const userMessage = { role: "user", text: input };
-    const messageText = input;
+    if (!trimmedInput && !fileToSend) {
+      return;
+    }
+
+    const fallbackText = fileToSend ? `Uploaded file: ${fileToSend.name}` : "";
+    const messageText = trimmedInput || fallbackText;
+    const userMessage = {
+      role: "user",
+      text: messageText,
+      attachmentName: fileToSend?.name || null,
+    };
     const currentChat = activeChat ?? createNewChat("New Chat");
     const shouldCreateNewChat = !activeChat;
     const currentChatId = currentChat.id;
-    const conversationMessages = [...currentChat.messages, userMessage];
+    const conversationMessages = [
+      ...currentChat.messages.map((message) => ({
+        role: message.role,
+        text: message.text,
+      })),
+      {
+        role: "user",
+        text: messageText,
+      },
+    ];
 
     setInput("");
     setSelectedFile(null);
@@ -406,16 +533,31 @@ function App() {
     });
 
     try {
-      const res = await fetch("http://localhost:8000/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: conversationMessages,
-          role_prompts: rolePrompts,
-        }),
-      });
+      const res = fileToSend
+        ? await (async () => {
+            const formData = new FormData();
+            formData.append("file", fileToSend);
+            formData.append("message", trimmedInput);
+            formData.append("messages", JSON.stringify(conversationMessages));
+            formData.append("role_prompts", JSON.stringify(rolePrompts));
+            formData.append("response_language", responseLanguage);
+
+            return fetch("http://localhost:8000/chat/file", {
+              method: "POST",
+              body: formData,
+            });
+          })()
+        : await fetch("http://localhost:8000/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messages: conversationMessages,
+              role_prompts: rolePrompts,
+              response_language: responseLanguage,
+            }),
+          });
 
       const data = await res.json();
       const selectedRoleName = data.selected_role_name || "General";
@@ -477,6 +619,7 @@ function App() {
       formData.append("file", audioFile);
       formData.append("messages", JSON.stringify(conversationMessages));
       formData.append("role_prompts", JSON.stringify(rolePrompts));
+      formData.append("response_language", responseLanguage);
 
       const res = await fetch("http://localhost:8000/chat/audio", {
         method: "POST",
@@ -593,6 +736,11 @@ function App() {
     fileInputRef.current?.click();
   };
 
+  const handleResponseLanguageSelect = (language) => {
+    setResponseLanguage(language);
+    setIsLanguageMenuOpen(false);
+  };
+
   const handleFileChange = (event) => {
     const file = event.target.files?.[0] ?? null;
 
@@ -604,9 +752,13 @@ function App() {
       "application/pdf",
       "application/msword",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
     ];
     const isAllowedType =
-      allowedTypes.includes(file.type) || /\.(pdf|doc|docx)$/i.test(file.name);
+      allowedTypes.includes(file.type) ||
+      /\.(pdf|doc|docx|csv)$/i.test(file.name);
 
     if (!isAllowedType) {
       event.target.value = "";
@@ -823,52 +975,62 @@ function App() {
                 : null;
 
             return (
-              <div key={index} className={`message ${msg.role}`}>
-                <div className="message-content">
-                  {msg.isPendingTranscript ? (
-                    <div className="transcribing-message" aria-live="polite">
-                      <span>Transcribing your message</span>
-                      <span className="transcribing-dots" aria-hidden="true">
-                        <span>.</span>
-                        <span>.</span>
-                        <span>.</span>
-                      </span>
-                    </div>
-                  ) : mermaidSection ? (
-                    <>
-                      {mermaidSection.before.trim() && (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {formatStepLines(mermaidSection.before)}
-                        </ReactMarkdown>
-                      )}
-                      <MermaidDiagram chart={mermaidSection.chart} />
-                      {mermaidSection.after.trim() && (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {formatStepLines(mermaidSection.after)}
-                        </ReactMarkdown>
-                      )}
-                    </>
-                  ) : asciiDiagramSection ? (
-                    <>
-                      {asciiDiagramSection.before.trim() && (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {formatStepLines(asciiDiagramSection.before)}
-                        </ReactMarkdown>
-                      )}
-                      <pre className="ascii-diagram">
-                        {asciiDiagramSection.diagram}
-                      </pre>
-                      {asciiDiagramSection.after.trim() && (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {formatStepLines(asciiDiagramSection.after)}
-                        </ReactMarkdown>
-                      )}
-                    </>
-                  ) : (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {formatStepLines(msg.text)}
-                    </ReactMarkdown>
-                  )}
+              <div key={index} className={`message-group ${msg.role}`}>
+                {msg.attachmentName && (
+                  <div
+                    className={`message-attachment ${msg.role}`}
+                    title={msg.attachmentName}
+                  >
+                    {msg.attachmentName}
+                  </div>
+                )}
+                <div className={`message ${msg.role}`}>
+                  <div className="message-content">
+                    {msg.isPendingTranscript ? (
+                      <div className="transcribing-message" aria-live="polite">
+                        <span>Transcribing your message</span>
+                        <span className="transcribing-dots" aria-hidden="true">
+                          <span>.</span>
+                          <span>.</span>
+                          <span>.</span>
+                        </span>
+                      </div>
+                    ) : mermaidSection ? (
+                      <>
+                        {mermaidSection.before.trim() && (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {formatStepLines(mermaidSection.before)}
+                          </ReactMarkdown>
+                        )}
+                        <MermaidDiagram chart={mermaidSection.chart} />
+                        {mermaidSection.after.trim() && (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {formatStepLines(mermaidSection.after)}
+                          </ReactMarkdown>
+                        )}
+                      </>
+                    ) : asciiDiagramSection ? (
+                      <>
+                        {asciiDiagramSection.before.trim() && (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {formatStepLines(asciiDiagramSection.before)}
+                          </ReactMarkdown>
+                        )}
+                        <pre className="ascii-diagram">
+                          {asciiDiagramSection.diagram}
+                        </pre>
+                        {asciiDiagramSection.after.trim() && (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {formatStepLines(asciiDiagramSection.after)}
+                          </ReactMarkdown>
+                        )}
+                      </>
+                    ) : msg.text ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {formatStepLines(msg.text)}
+                      </ReactMarkdown>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             );
@@ -878,9 +1040,10 @@ function App() {
 
         <div className="input-area">
           <input
+            ref={fileInputRef}
             className="file-input"
             type="file"
-            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".pdf,.doc,.docx,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/csv,application/csv,application/vnd.ms-excel"
             onChange={handleFileChange}
           />
 
@@ -891,6 +1054,49 @@ function App() {
           >
             +
           </button>
+
+          <div className="language-menu-container">
+            <button
+              className="language-btn"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={isLanguageMenuOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsLanguageMenuOpen((isOpen) => !isOpen);
+              }}
+            >
+              <span className="language-btn-label">{responseLanguage}</span>
+              <span className="language-btn-caret" aria-hidden="true">
+                ▾
+              </span>
+            </button>
+
+            {isLanguageMenuOpen && (
+              <div
+                className="language-menu"
+                role="menu"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="language-menu-list">
+                  {RESPONSE_LANGUAGES.map((language) => (
+                    <button
+                      key={language}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={responseLanguage === language}
+                      className={`language-menu-item ${
+                        responseLanguage === language ? "active" : ""
+                      }`}
+                      onClick={() => handleResponseLanguageSelect(language)}
+                    >
+                      {language}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
           {selectedFile && (
             <div className="attachment-chip" title={selectedFile.name}>

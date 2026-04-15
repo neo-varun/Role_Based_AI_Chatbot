@@ -192,10 +192,29 @@
   overflow-wrap: anywhere;
 }
 
+.message-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(75%, 72ch);
+}
+
+.message-group.user {
+  margin-left: auto;
+  align-items: flex-end;
+}
+
+.message-group.bot {
+  align-items: flex-start;
+}
+
+.message-group .message {
+  max-width: 100%;
+}
+
 .message.user {
   background: #0f2b46;
   color: white;
-  margin-left: auto;
   border-bottom-right-radius: 4px;
 }
 
@@ -323,6 +342,7 @@
 }
 
 .input-area {
+  position: relative;
   display: flex;
   padding: 15px;
   border-top: 1px solid #ddd;
@@ -365,6 +385,83 @@
 .send-btn {
   background: #0f2b46;
   color: white;
+}
+
+.language-menu-container {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.language-btn {
+  position: relative;
+  height: 42px;
+  border: 1px solid #c1d0df;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #173752;
+  cursor: pointer;
+  padding: 0 28px 0 10px;
+  min-width: 0;
+  display: inline-block;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.language-btn-label {
+  display: inline-block;
+}
+
+.language-btn-caret {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #395a78;
+}
+
+.language-menu {
+  position: absolute;
+  bottom: 52px;
+  left: 0;
+  width: 175px;
+  border: 1px solid #c8d6e4;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(6, 17, 29, 0.2);
+  z-index: 20;
+  padding: 2px;
+  overflow: hidden;
+}
+
+.language-menu-list {
+  max-height: 286px;
+  overflow-y: auto;
+  border-radius: 10px;
+}
+
+.language-menu-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #183652;
+  text-align: left;
+  padding: 6px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.language-menu-item:hover {
+  background: #edf3fa;
+}
+
+.language-menu-item.active {
+  background: #dfeeff;
+  color: #0f2b46;
+  font-weight: 700;
 }
 
 .mic-btn {
@@ -414,6 +511,27 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.message-attachment {
+  display: inline-block;
+  max-width: 100%;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid #cad7e3;
+  background: #eef3f8;
+  color: #183652;
+}
+
+.message-attachment.user {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: #e0ecf8;
+  color: #0f2b46;
 }
 
 .dev-prompt-overlay {
@@ -633,6 +751,25 @@
 }
 
 @media (max-width: 940px) {
+  .input-area {
+    flex-wrap: wrap;
+  }
+
+  .chat-input-wrap {
+    order: 3;
+    flex: 1 1 100%;
+  }
+
+  .language-btn {
+    min-width: 124px;
+  }
+
+  .language-menu {
+    left: auto;
+    right: 0;
+    width: min(86vw, 260px);
+  }
+
   .dev-prompt-content {
     grid-template-columns: 1fr;
     overflow-y: auto;
